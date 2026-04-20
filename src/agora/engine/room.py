@@ -741,18 +741,26 @@ class RoomEngine:
         return scoped[0][0]
 
     def _looks_like_tool_use(self, text: str) -> bool:
+        """Detect Gemini CLI tool-use drift via structural markers only.
+        Prose-substring matching produces too many false positives on
+        legitimate debate replies that happen to contain words like "read"
+        or "file". Look for concrete tool-call scaffolding instead: fenced
+        shell blocks, tool-call JSON shapes, or Gemini's canonical
+        Linked-Devices / function-call headers.
+        """
         lowered = text.lower()
-        markers = [
-            "i will read",
-            "i'll read",
-            "run shell",
-            "execute command",
-            "inspect the workspace",
-            "open the file",
-            "tool call",
-            "let me check the repository",
+        structural_markers = [
+            "```tool_code",
+            "```shell",
+            "```bash",
+            '"tool_calls":',
+            '"tool_call":',
+            "<tool_code",
+            "[tool_call",
+            "function_call:",
+            "```python\n# i'll",
         ]
-        return any(marker in lowered for marker in markers)
+        return any(marker in lowered for marker in structural_markers)
 
     def _event(self, room: Room, level: str, event: str, detail: dict[str, object]) -> None:
         line = {"ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "level": level, "event": event, "detail": detail}

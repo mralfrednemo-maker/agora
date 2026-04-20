@@ -96,7 +96,14 @@ class OpenClawDriver(Driver):
             try:
                 await asyncio.wait_for(proc.communicate(), timeout=15)
             except TimeoutError:
-                proc.kill()
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    pass
                 return False, "wsl docker exec timed out"
         except FileNotFoundError:
             return False, "wsl not available on PATH"

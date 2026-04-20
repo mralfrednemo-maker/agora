@@ -19,8 +19,14 @@ from agora.ops.tools import NOW_SPEC, ToolRegistry
 
 EventEmitter = Callable[[dict[str, object]], Awaitable[None]]
 
-# Driver subprocess typically has its own timeout_s; we wrap with extra slack.
-DRIVER_TURN_TIMEOUT_S = 330
+# Extra slack on top of the driver's own timeout_s. Keep > 5s so the driver's
+# kill-and-wait path can run cleanly before the outer wait_for fires.
+DRIVER_TIMEOUT_SLACK_S = 30
+
+
+def _driver_timeout(driver: Driver) -> float:
+    inner = int(getattr(driver, "timeout_s", 300) or 300)
+    return float(inner + DRIVER_TIMEOUT_SLACK_S)
 
 
 def _utc_now_iso() -> str:
@@ -148,6 +154,17 @@ class OpsManager:
         if entries:
             start = max(e.seq for e in entries) + 1
             self._seq_counter = itertools.count(start)
+        # Rehydrate pending system events: any system messages that appear after
+        # the last user turn were queued for the admin's next turn and haven't
+        # been delivered yet. Survives gateway restarts.
+        last_user_idx = -1
+        for i in range(len(entries) - 1, -1, -1):
+            if entries[i].role == "user":
+                last_user_idx = i
+                break
+        for entry in entries[last_user_idx + 1:]:
+            if entry.role == "system" and entry.content:
+                self._pending_system.append(entry.content)
 
     def _persist_message_sync(self, message: OpsMessage) -> None:
         path = self.transcript_path
@@ -225,13 +242,14 @@ class OpsManager:
         last_admin: OpsMessage | None = None
 
         while True:
+            outer_timeout = _driver_timeout(self.driver)
             try:
                 reply = await asyncio.wait_for(
                     self.driver.send_in_session(OPS_ROOM_ID, current_input),
-                    timeout=DRIVER_TURN_TIMEOUT_S,
+                    timeout=outer_timeout,
                 )
             except asyncio.TimeoutError:
-                return await self._append("system", f"driver timed out after {DRIVER_TURN_TIMEOUT_S}s")
+                return await self._append("system", f"driver timed out after {outer_timeout:.0f}s")
             except Exception as exc:  # noqa: BLE001
                 return await self._append("system", f"driver error: {type(exc).__name__}: {exc}")
 

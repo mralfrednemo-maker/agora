@@ -66,3 +66,9 @@ Room persistence:
 ```powershell
 pytest
 ```
+
+## Operational notes
+
+- **Rotate an OpenAI key:** the `.env` file is read once at gateway import. After editing `.env`, restart the gateway for the new key to take effect. `get()` in `agora.ops.config` still reads `os.environ` first, so `set OPENAI_API_KEY=new` in the same shell before `python -m agora.gateway` works without an .env edit.
+- **Bridge authentication:** set `AGORA_BRIDGE_TOKEN=<secret>` in both bridges' environment and in Agora's `.env`. Bridges send `X-Bridge-Token` on webhook POSTs; Agora rejects mismatches. Leaving it unset is acceptable for single-user dev on 127.0.0.1 only — any local process can otherwise post fake inbound events.
+- **Transcript size:** `data/rooms/<room-id>/transcript.jsonl` grows unbounded. A single debate room rarely exceeds a few MB but long-lived ops rooms can. Delete or archive old rooms via the dashboard when noisy.

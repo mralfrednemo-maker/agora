@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import mimetypes
-from typing import AsyncIterator
 
 import httpx
 
@@ -75,11 +74,5 @@ async def synthesize_full(text: str, voice: str | None = None) -> bytes:
         return resp.content
 
 
-async def synthesize(text: str, voice: str | None = None) -> AsyncIterator[bytes]:
-    """Generator API retained for streaming consumers. Validation runs on the
-    caller via `ensure_configured()` + `synthesize_full`, so errors surface
-    before HTTP headers are flushed.
-    """
-    data = await synthesize_full(text, voice)
-    # Yield in a single chunk — small mp3s and this simplifies error handling.
-    yield data
+# `synthesize` (async generator) was removed — gateway uses `synthesize_full`
+# to surface errors synchronously before StreamingResponse headers are flushed.

@@ -66,14 +66,12 @@ class WebBrowserDriver(Driver):
         self._rehydrate_sessions()
 
     def _rehydrate_sessions(self) -> None:
-        for file_path in self._sessions_dir.glob("*.json"):
-            try:
-                payload = json.loads(file_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            token = payload.get("started")
-            if token:
-                self.sessions[file_path.stem] = str(token)
+        """Intentionally a no-op. Browser-side thread state is not durable —
+        after a gateway restart the underlying Chrome tab may have been closed
+        or navigated. Forcing a fresh `start_session(new_thread=True)` keeps
+        the engine and browser threads in lockstep.
+        """
+        return
 
     def _session_file(self, room_id: str) -> Path:
         return self._sessions_dir / f"{room_id}.json"
@@ -129,6 +127,19 @@ class WebBrowserDriver(Driver):
 
         raw_out = stdout.decode("utf-8", errors="replace")
         raw_err = stderr.decode("utf-8", errors="replace")
+
+        # Detect browser_safety.py rate-limit markers and treat them as fatal
+        # for the debate. The global rule ("NEVER retry a failed browser
+        # automation more than once") is enforced here — we raise DriverError
+        # with a dedicated prefix so the engine can stop the room.
+        rl_markers = ("[SAFETY] RATE LIMIT", "[SAFETY] LOCKED", "[SAFETY] QUOTA")
+        combined = raw_out + "\n" + raw_err
+        if any(marker in combined for marker in rl_markers):
+            raise DriverError(
+                f"{self.kind} rate-limited (browser_safety.py): "
+                f"{(raw_err.strip() or raw_out.strip())[:400]}"
+            )
+
         if proc.returncode != 0:
             raise DriverError(
                 f"{self.kind} browser automation exit {proc.returncode}: "

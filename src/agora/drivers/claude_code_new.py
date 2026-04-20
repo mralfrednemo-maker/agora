@@ -99,8 +99,23 @@ class ClaudeCodeNewDriver(Driver):
             except (asyncio.TimeoutError, ProcessLookupError):
                 pass
             raise DriverTimeoutError(f"Driver timed out after {self.timeout_s}s") from exc
+        except asyncio.CancelledError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                pass
+            raise
         output = stdout.decode("utf-8", errors="replace")
         err = stderr.decode("utf-8", errors="replace")
+        if proc.returncode != 0:
+            raise DriverError(
+                f"claude --print exit {proc.returncode}: "
+                f"{(err.strip() or output.strip())[:500]}"
+            )
         content = self._extract_text(output)
         if not content:
             content = err.strip() or ""
