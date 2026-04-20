@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agora Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="debates">Debates</button>
+    <button class="tab-btn" data-tab="ops">Ops</button>
+  </nav>
+  <main class="layout" data-tab="debates">
+    <section class="pane rooms" aria-label="Rooms pane">
+      <div class="rooms-head">
+        <h2>Rooms</h2>
+        <button id="openNewDebateBtn" class="primary-btn" type="button">+ New Debate</button>
+      </div>
+      <div id="roomsActive"></div>
+      <details id="archivedRoomsDetails" class="archived-wrap">
+        <summary>Archived</summary>
+        <div id="roomsArchived"></div>
+      </details>
+    </section>
+
+    <section class="pane transcript" aria-label="Transcript pane">
+      <div id="transcriptHeader" class="debate-header"></div>
+      <div class="transcript-head">
+        <h2>Transcript</h2>
+        <div id="participantLegend" class="participant-legend"></div>
+      </div>
+      <div id="transcriptWrap" class="transcript-wrap">
+        <div id="transcript"></div>
+        <button id="newMessagesPill" class="new-messages hidden" type="button">↓ new messages</button>
+      </div>
+    </section>
+
+    <section class="pane command" aria-label="Command pane">
+      <div class="command-head">
+        <h2>Command</h2>
+        <span class="help-tip" title="Most room controls are in the transcript header buttons. Use slash commands for power-user actions.">?</span>
+      </div>
+      <input id="commandInput" type="text" placeholder="/inject Focus on concrete tradeoffs" autocomplete="off" />
+      <div id="commandHint" class="command-hint"></div>
+      <div id="status" class="status status-info">Ready.</div>
+    </section>
+  </main>
+
+  <dialog id="newDebateModal" class="modal">
+    <form id="newDebateForm" method="dialog" class="modal-body">
+      <h3>New Debate</h3>
+      <label class="form-label" for="topicInput">Topic</label>
+      <textarea id="topicInput" rows="3" maxlength="1000" required placeholder="Is Python better than Go for backend services?"></textarea>
+
+      <fieldset class="form-fieldset">
+        <legend>Participants</legend>
+        <div id="participantsList"></div>
+      </fieldset>
+
+      <label class="form-label" for="styleInput">Debate style</label>
+      <select id="styleInput">
+        <option value="ein-mdp">ein-mdp (4 fixed phases)</option>
+        <option value="critic-terminate">critic-terminate (ends on TERMINATE majority)</option>
+      </select>
+
+      <div id="roundsRow" class="form-row hidden">
+        <label class="form-label" for="roundsInput">Max total rounds</label>
+        <input id="roundsInput" type="range" min="4" max="15" value="8" />
+        <div id="roundsLabel" class="rounds-label"></div>
+      </div>
+
+      <!-- Convergence check is auto-wired per style: agree-marker for ein-mdp, terminate-majority for critic-terminate. No user control needed. -->
+      <input id="convergenceInput" type="hidden" value="agree-marker" />
+
+      <label class="toggle-row" for="autoVerdictInput">
+        <input id="autoVerdictInput" type="checkbox" checked />
+        <span>Auto-generate verdict when debate ends</span>
+      </label>
+
+      <div class="modal-actions">
+        <button id="cancelNewDebateBtn" type="button" class="ghost-btn">Cancel</button>
+        <button id="startDebateBtn" type="submit" class="primary-btn">Start Debate</button>
+      </div>
+    </form>
+  </dialog>
+
+  <section id="opsPanel" class="ops-panel hidden" aria-label="Ops pane">
+    <div class="ops-head">
+      <h2>Ops — Admin Agent</h2>
+      <div class="ops-controls">
+        <button id="opsMicBtn" class="ghost-btn" type="button" title="Hold to talk">🎤 Hold to talk</button>
+        <label class="toggle-row small">
+          <input id="opsVoiceReplies" type="checkbox" />
+          <span>Speak replies</span>
+        </label>
+      </div>
+    </div>
+    <div id="opsTranscript" class="ops-transcript"></div>
+    <form id="opsForm" class="ops-composer">
+      <textarea id="opsInput" rows="2" placeholder="Talk to Ops..." required></textarea>
+      <button class="primary-btn" type="submit">Send</button>
+    </form>
+    <audio id="opsAudio" style="display:none;"></audio>
+  </section>
+
+  <div id="footerStatus" class="footer-status" aria-live="polite">
+    <span id="wsState">WS: connecting</span>
+    <span id="activeRoomState">Room: none</span>
+    <span id="lastEventState">Last event: --</span>
+  </div>
+
+  <script type="module" src="/app.mjs"></script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Environment
+.env
+.env.local
+*.log
+
+# Runtime data (regenerated at runtime)
+data/rooms/
+data/ops/
+data/driver-state/
+data/m3-dry-run-*/
+data/verification/
+data/test-temp/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Agora temp artifacts
+pytest-cache-files-*
+agora.log
