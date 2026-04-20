@@ -46,7 +46,7 @@ Tool use:
 You have structured tools. To invoke one, emit a block EXACTLY in this format (nothing else wrapping it):
 
 <tool name="tool_name">
-{json args}
+{{json args}}
 </tool>
 
 You can emit multiple tool blocks in a single reply — they will be executed in order.
@@ -55,7 +55,7 @@ Do NOT invent tool names. Only use the ones listed below.
 After a tool runs, the result comes back in the next user turn as:
 
 <tool-result name="tool_name">
-{result json}
+{{result json}}
 </tool-result>
 
 If a tool fails, the result will include "ok": false and an "error" field. Handle gracefully.

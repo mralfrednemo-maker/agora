@@ -64,6 +64,10 @@ class CommandBody(BaseModel):
     text: str
 
 
+class OpsMessageBody(BaseModel):
+    text: str
+
+
 def validate_max_total_rounds(style: str, max_total_rounds: int) -> None:
     if max_total_rounds < MIN_TOTAL_ROUNDS:
         raise HTTPException(status_code=400, detail=f"max_total_rounds must be >= {MIN_TOTAL_ROUNDS}")
@@ -230,9 +234,6 @@ def build_app() -> FastAPI:
 
     # ---- Ops (admin agent) -----------------------------------------------
 
-    class OpsMessageBody(BaseModel):
-        text: str
-
     MAX_OPS_TEXT = 32_000
     MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
@@ -280,7 +281,7 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=413, detail=f"text exceeds {MAX_TTS_CHARS} chars")
         try:
             ensure_configured()
-            audio_bytes = await synthesize_full(text)
+            audio_bytes, media_type = await synthesize_full(text)
         except VoiceNotConfigured as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ValueError as exc:
@@ -291,7 +292,7 @@ def build_app() -> FastAPI:
         async def one_shot() -> Any:
             yield audio_bytes
 
-        return StreamingResponse(one_shot(), media_type="audio/mpeg")
+        return StreamingResponse(one_shot(), media_type=media_type)
 
     def _check_webhook_token(header_value: str | None) -> None:
         expected = os.environ.get("AGORA_BRIDGE_TOKEN") or ""
