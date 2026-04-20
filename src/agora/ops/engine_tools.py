@@ -192,6 +192,20 @@ def register_telegram_tools(registry: ToolRegistry) -> None:
 
 
 def register_whatsapp_tools(registry: ToolRegistry) -> None:
+    async def _wa_call(args: dict[str, Any]) -> dict[str, Any]:
+        # Baileys (the WA Web Multi-Device library the bridge uses) does NOT
+        # support initiating outbound calls. Only native mobile apps can.
+        # Documented at https://github.com/WhiskeySockets/Baileys (search "call").
+        _ = args
+        return {
+            "ok": False,
+            "error": (
+                "outbound WhatsApp calls are not supported by the WA Web Multi-Device "
+                "protocol that this bridge uses. Only native mobile apps can place calls. "
+                "Recommend: tell Christo to place the call from his phone."
+            ),
+        }
+
     async def _wa_send(args: dict[str, Any]) -> dict[str, Any]:
         contact = str(args.get("contact", "")).strip()
         text = str(args.get("text", "")).strip()
@@ -240,5 +254,13 @@ def register_whatsapp_tools(registry: ToolRegistry) -> None:
             description="Fetch recent WhatsApp messages (outbound + inbound) from the bridge",
             args_schema='{"limit": int (optional, default 20)}',
             func=_wa_recent,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="wa_call",
+            description="(Unsupported) Attempt to place an outbound WhatsApp call — returns an explanatory error",
+            args_schema='{"contact": "str"}',
+            func=_wa_call,
         )
     )

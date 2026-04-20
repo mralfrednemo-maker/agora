@@ -19,9 +19,13 @@ from pydantic import BaseModel
 
 from agora.config.phases import MIN_TOTAL_ROUNDS, STYLE_ROUND_CAPS
 from agora.commands.handlers import CommandContext, CommandHandler
+from agora.drivers.chatgpt_web import ChatGPTWebDriver
 from agora.drivers.claude_code_new import ClaudeCodeNewDriver
+from agora.drivers.claude_web import ClaudeWebDriver
 from agora.drivers.codex import CodexDriver
 from agora.drivers.gemini_cli import GeminiCliDriver
+from agora.drivers.gemini_web import GeminiWebDriver
+from agora.drivers.openclaw import OpenClawDriver
 from agora.engine.room import RoomEngine
 from agora.ops.admin import OpsManager
 from agora.ops.engine_tools import (
@@ -77,11 +81,29 @@ def build_app() -> FastAPI:
     static_dir = base_dir / "src" / "agora" / "web" / "static"
     store = RoomStore(base_dir=base_dir / "data" / "rooms")
 
-    drivers = {
+    drivers: dict[str, Any] = {
         "claude-code-new-1": ClaudeCodeNewDriver(id="claude-code-new-1", display_name="Claude Code New"),
         "codex-1": CodexDriver(id="codex-1", display_name="Codex"),
         "gemini-cli-1": GeminiCliDriver(id="gemini-cli-1", display_name="Gemini CLI"),
+        "chatgpt-web-1": ChatGPTWebDriver(),
+        "claude-web-1": ClaudeWebDriver(),
+        "gemini-web-1": GeminiWebDriver(),
     }
+    # OpenClaw agents are opt-in per session (each has a named agent).
+    for oc_agent, oc_display in (
+        ("turing", "OpenClaw Turing"),
+        ("daedalus", "OpenClaw Daedalus"),
+        ("hermes", "OpenClaw Hermes"),
+        ("themis", "OpenClaw Themis"),
+        ("socrates", "OpenClaw Socrates"),
+        ("athena", "OpenClaw Athena"),
+        ("descartes", "OpenClaw Descartes"),
+        ("prism", "OpenClaw Prism"),
+        ("ikarus", "OpenClaw Ikarus"),
+        ("inspector", "OpenClaw Inspector"),
+    ):
+        oc_id = f"openclaw-{oc_agent}-1"
+        drivers[oc_id] = OpenClawDriver(id=oc_id, display_name=oc_display, agent=oc_agent)
     admin_driver = ClaudeCodeNewDriver(id="admin-1", display_name="Ops Admin")
 
     ws_hub = WsHub()
