@@ -33,6 +33,7 @@ class ClaudeCodeNewDriver(Driver):
     display_name: str
     token_ceiling: int = 180_000
     timeout_s: int = 300
+    model: str | None = None  # None = Claude Code's own default; set via --model flag
     sessions: dict[str, str] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
@@ -73,6 +74,8 @@ class ClaudeCodeNewDriver(Driver):
 
     async def _run_claude(self, prompt: str, room_id: str, session_id: str | None = None) -> DriverReply:
         cmd = ["claude", "--print", "--verbose", "--output-format", "stream-json"]
+        if self.model:
+            cmd.extend(["--model", self.model])
         if session_id:
             cmd.extend(["--resume", session_id])
         proc = await asyncio.create_subprocess_exec(

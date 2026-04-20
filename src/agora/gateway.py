@@ -68,6 +68,10 @@ class OpsMessageBody(BaseModel):
     text: str
 
 
+class OpsModelBody(BaseModel):
+    model: str
+
+
 def validate_max_total_rounds(style: str, max_total_rounds: int) -> None:
     if max_total_rounds < MIN_TOTAL_ROUNDS:
         raise HTTPException(status_code=400, detail=f"max_total_rounds must be >= {MIN_TOTAL_ROUNDS}")
@@ -108,7 +112,14 @@ def build_app() -> FastAPI:
     ):
         oc_id = f"openclaw-{oc_agent}-1"
         drivers[oc_id] = OpenClawDriver(id=oc_id, display_name=oc_display, agent=oc_agent)
-    admin_driver = ClaudeCodeNewDriver(id="admin-1", display_name="Ops Admin")
+    # Admin starts on Haiku 4.5 (200K cap, cheap). User can switch to Sonnet or
+    # Opus 200K via the dashboard dropdown. Opus 1M is refused — see
+    # tech-library/claude-code/opus-1m-context-switching-pitfall.md.
+    admin_driver = ClaudeCodeNewDriver(
+        id="admin-1",
+        display_name="Ops Admin",
+        model="claude-haiku-4-5-20251001",
+    )
 
     ws_hub = WsHub()
     engine = RoomEngine(store=store, drivers=drivers, emit=ws_hub.broadcast)
@@ -237,9 +248,48 @@ def build_app() -> FastAPI:
     MAX_OPS_TEXT = 32_000
     MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
+    # 200K-context models only. The 1M Opus variant (`claude-opus-4-7[1m]`) is
+    # REFUSED because mid-session switching from 1M to a 200K model produces
+    # unpredictable truncation. Keeping all choices at a shared 200K ceiling
+    # means the admin can swap cost tiers freely without memory surprises.
+    # See: tech-library/claude-code/opus-1m-context-switching-pitfall.md
+    ALLOWED_OPS_MODELS = {
+        "claude-haiku-4-5": "claude-haiku-4-5-20251001",
+        "claude-sonnet-4-6": "claude-sonnet-4-6",
+        "claude-opus-4-7": "claude-opus-4-7",
+    }
+
     @app.get("/api/ops")
     async def ops_get() -> dict[str, object]:
-        return await ops.snapshot()
+        snap = await ops.snapshot()
+        # Map the CLI model back to its label; "default" is not exposed anymore.
+        current = getattr(admin_driver, "model", None)
+        label = None
+        for lbl, cli in ALLOWED_OPS_MODELS.items():
+            if cli == current:
+                label = lbl
+                break
+        snap["model"] = label or "claude-haiku-4-5"
+        snap["allowed_models"] = list(ALLOWED_OPS_MODELS.keys())
+        return snap
+
+    @app.post("/api/ops/model")
+    async def ops_set_model(body: OpsModelBody) -> dict[str, object]:
+        choice = (body.model or "").strip()
+        # Belt-and-braces: reject any 1M-context model string even if it snuck
+        # into the allowlist. Admin must stay on a 200K ceiling.
+        if "[1m]" in choice.lower() or choice.lower().endswith("-1m"):
+            raise HTTPException(
+                status_code=400,
+                detail="1M-context models are not permitted for the ops admin (context-switch pitfall)",
+            )
+        if choice not in ALLOWED_OPS_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown model '{choice}'; allowed: {list(ALLOWED_OPS_MODELS.keys())}",
+            )
+        admin_driver.model = ALLOWED_OPS_MODELS[choice]
+        return {"ok": True, "model": choice, "cli_model": admin_driver.model}
 
     @app.post("/api/ops/message")
     async def ops_message(body: OpsMessageBody) -> dict[str, object]:

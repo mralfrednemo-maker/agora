@@ -863,10 +863,43 @@ async function refreshOps() {
     const snap = await fetch("/api/ops").then((r) => r.json());
     opsTranscriptEl.innerHTML = "";
     (snap.transcript || []).forEach(renderOpsMessage);
+    const modelSel = document.getElementById("opsModelSelect");
+    if (modelSel && snap.model) modelSel.value = snap.model;
   } catch (e) {
     console.error("[agora] ops refresh failed", e);
   }
 }
+
+document.getElementById("opsModelSelect")?.addEventListener("change", async (event) => {
+  const choice = event.target.value;
+  try {
+    const resp = await fetch("/api/ops/model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: choice }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      setStatus(`Model switch failed: ${data?.detail || resp.status}`, "error");
+    } else {
+      setStatus(`Ops model: ${choice}`, "success");
+    }
+  } catch (err) {
+    setStatus(`Model switch error: ${err?.message || err}`, "error");
+  }
+});
+
+// Enter submits, Shift+Enter inserts a newline (standard chat UX).
+opsInputEl?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    if (typeof opsFormEl.requestSubmit === "function") {
+      opsFormEl.requestSubmit();
+    } else {
+      opsFormEl.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    }
+  }
+});
 
 opsFormEl?.addEventListener("submit", async (event) => {
   event.preventDefault();
