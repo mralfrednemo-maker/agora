@@ -71,22 +71,43 @@ class ClaudeCodeResumeDriver(Driver):
         return True, "ok"
 
     async def _acquire_lock(self, session_id: str) -> Path:
-        """Best-effort file lock. Returns the lock path (caller must unlink).
-        If the lock already exists and is fresh (< timeout_s old), raises.
+        """Atomic file lock via O_CREAT|O_EXCL. Returns the lock path (caller
+        must release via _release_lock). If the lock already exists AND is
+        stale (> timeout_s old), it is reclaimed; fresh locks raise.
         """
         lock_path = self._lock_file(session_id)
-        if lock_path.exists():
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        try:
+            fd = os.open(str(lock_path), flags)
+        except FileExistsError:
+            # Check staleness — may be a crashed prior run.
             try:
                 age = datetime.now(timezone.utc).timestamp() - lock_path.stat().st_mtime
+            except FileNotFoundError:
+                # Race: lock vanished between our attempts. Retry once.
+                fd = os.open(str(lock_path), flags)
+            else:
                 if age < self.timeout_s:
                     raise DriverError(
                         f"claude-code-resume: another process is using session "
                         f"{session_id} (lock age {age:.0f}s)"
                     )
-            except FileNotFoundError:
-                pass
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path.write_text(str(os.getpid()), encoding="utf-8")
+                # Stale: reclaim atomically.
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+                try:
+                    fd = os.open(str(lock_path), flags)
+                except FileExistsError as exc:
+                    raise DriverError(
+                        f"claude-code-resume: lock race on session {session_id}"
+                    ) from exc
+        try:
+            os.write(fd, str(os.getpid()).encode("utf-8"))
+        finally:
+            os.close(fd)
         return lock_path
 
     def _release_lock(self, lock_path: Path) -> None:
@@ -130,11 +151,26 @@ class ClaudeCodeResumeDriver(Driver):
                 except (asyncio.TimeoutError, ProcessLookupError):
                     pass
                 raise DriverTimeoutError(f"Driver timed out after {self.timeout_s}s") from exc
+            except asyncio.CancelledError:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    pass
+                raise
         finally:
             self._release_lock(lock)
 
         output = stdout.decode("utf-8", errors="replace")
         err = stderr.decode("utf-8", errors="replace")
+        if proc.returncode != 0:
+            raise DriverError(
+                f"claude --resume exit {proc.returncode}: "
+                f"{(err.strip() or output.strip())[:500]}"
+            )
         content = self._extract_text(output) or err.strip() or ""
         # Resumed sessions echo their own id on the init line; capture for telemetry.
         resume_id = self._extract_session_id(output + "\n" + err) or session_id
