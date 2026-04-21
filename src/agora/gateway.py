@@ -118,8 +118,9 @@ def build_app() -> FastAPI:
     admin_driver = ClaudeCodeNewDriver(
         id="admin-1",
         display_name="Ops Admin",
-        model="claude-haiku-4-5-20251001",
+        model="MiniMax-M2.7-highspeed",
     )
+    ops_model_choice = "claude-opus-4-7"
 
     ws_hub = WsHub()
     engine = RoomEngine(store=store, drivers=drivers, emit=ws_hub.broadcast)
@@ -254,27 +255,22 @@ def build_app() -> FastAPI:
     # means the admin can swap cost tiers freely without memory surprises.
     # See: tech-library/claude-code/opus-1m-context-switching-pitfall.md
     ALLOWED_OPS_MODELS = {
-        "claude-haiku-4-5": "claude-haiku-4-5-20251001",
-        "claude-sonnet-4-6": "claude-sonnet-4-6",
-        "claude-opus-4-7": "claude-opus-4-7",
+        "claude-haiku-4-5": "MiniMax-M2.7",
+        "claude-sonnet-4-6": "MiniMax-M2.7",
+        "claude-opus-4-7": "MiniMax-M2.7-highspeed",
     }
 
     @app.get("/api/ops")
     async def ops_get() -> dict[str, object]:
         snap = await ops.snapshot()
-        # Map the CLI model back to its label; "default" is not exposed anymore.
-        current = getattr(admin_driver, "model", None)
-        label = None
-        for lbl, cli in ALLOWED_OPS_MODELS.items():
-            if cli == current:
-                label = lbl
-                break
-        snap["model"] = label or "claude-haiku-4-5"
+        snap["model"] = ops_model_choice
+        snap["backend_model"] = getattr(admin_driver, "model", None) or ALLOWED_OPS_MODELS[ops_model_choice]
         snap["allowed_models"] = list(ALLOWED_OPS_MODELS.keys())
         return snap
 
     @app.post("/api/ops/model")
     async def ops_set_model(body: OpsModelBody) -> dict[str, object]:
+        nonlocal ops_model_choice
         choice = (body.model or "").strip()
         # Belt-and-braces: reject any 1M-context model string even if it snuck
         # into the allowlist. Admin must stay on a 200K ceiling.
@@ -289,7 +285,9 @@ def build_app() -> FastAPI:
                 detail=f"unknown model '{choice}'; allowed: {list(ALLOWED_OPS_MODELS.keys())}",
             )
         admin_driver.model = ALLOWED_OPS_MODELS[choice]
-        return {"ok": True, "model": choice, "cli_model": admin_driver.model}
+        ops_model_choice = choice
+        await ops.reset_session()
+        return {"ok": True, "model": choice, "backend_model": admin_driver.model}
 
     @app.post("/api/ops/message")
     async def ops_message(body: OpsMessageBody) -> dict[str, object]:

@@ -72,12 +72,31 @@ class ClaudeCodeNewDriver(Driver):
             },
         )
 
-    async def _run_claude(self, prompt: str, room_id: str, session_id: str | None = None) -> DriverReply:
-        cmd = ["claude", "--print", "--verbose", "--output-format", "stream-json"]
+    def _router_command(self, session_id: str | None = None) -> str:
+        parts = [
+            "& 'C:\\Users\\chris\\PROJECTS\\scripts\\claude-code-router.ps1'",
+            "-Provider minimax",
+        ]
         if self.model:
-            cmd.extend(["--model", self.model])
+            parts.append(f"--model {self.model}")
+        parts.extend(
+            [
+                "--dangerously-skip-permissions",
+                "--print --verbose --output-format stream-json",
+            ]
+        )
         if session_id:
-            cmd.extend(["--resume", session_id])
+            parts.append(f"--resume {session_id}")
+        return " ".join(parts)
+
+    async def _run_claude(self, prompt: str, room_id: str, session_id: str | None = None) -> DriverReply:
+        cmd = [
+            "powershell.exe",
+            "-ExecutionPolicy", "Bypass",
+            "-NoProfile",
+            "-Command",
+            self._router_command(session_id=session_id),
+        ]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,

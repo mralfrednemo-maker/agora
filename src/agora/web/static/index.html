@@ -92,9 +92,9 @@
         <label class="toggle-row small">
           <span>Model:</span>
           <select id="opsModelSelect" title="All models are 200K context. 1M Opus is refused — see tech-library.">
-            <option value="claude-haiku-4-5">Haiku 4.5 (cheap, 200K)</option>
-            <option value="claude-sonnet-4-6">Sonnet 4.6 (balanced, 200K)</option>
-            <option value="claude-opus-4-7">Opus 4.7 (expensive, 200K)</option>
+            <option value="claude-haiku-4-5">Haiku tier -> MiniMax M2.7</option>
+            <option value="claude-sonnet-4-6">Sonnet tier -> MiniMax M2.7</option>
+            <option value="claude-opus-4-7">Opus tier -> MiniMax M2.7-highspeed</option>
           </select>
         </label>
         <button id="opsMicBtn" class="ghost-btn" type="button" title="Hold to talk">🎤 Hold to talk</button>
@@ -104,6 +104,13 @@
         </label>
       </div>
     </div>
+    <details id="opsInboxDetails" class="ops-inbox">
+      <summary>
+        📨 Inbox — <span id="opsInboxCount">0</span> messages
+        <small>(Telegram + WhatsApp inbound, hidden from main chat)</small>
+      </summary>
+      <div id="opsInboxList"></div>
+    </details>
     <div id="opsTranscript" class="ops-transcript"></div>
     <form id="opsForm" class="ops-composer">
       <textarea id="opsInput" rows="2" placeholder="Talk to Ops..." required></textarea>

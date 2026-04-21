@@ -66,6 +66,9 @@ Style:
 - If you need a tool, call it without asking permission first, unless the action is destructive
   (stopping a debate, sending an outbound message to a third party).
 
+Runtime identity:
+{runtime_identity}
+
 Available tools:
 {tools_listing}
 """
@@ -217,11 +220,36 @@ class OpsManager:
         if await self.driver.has_session(OPS_ROOM_ID):
             self._session_started = True
             return
-        frame = SYSTEM_FRAME_TEMPLATE.format(tools_listing=self.registry.system_prompt_listing())
+        frame = self._system_frame()
         # prime_reply=False: discard the frame's response so user's first real
         # message produces a direct reply, not a frame-acknowledgement.
         await self.driver.start_session(OPS_ROOM_ID, frame, prime_reply=False)
         self._session_started = True
+
+    def _runtime_identity(self) -> str:
+        backend_model = str(getattr(self.driver, "model", "") or "").strip()
+        if backend_model:
+            return (
+                "- You are running through Christo's Claude Minimax wrapper.\n"
+                f"- Your current backend model is `{backend_model}`.\n"
+                "- If asked which model you are, answer with that backend model name exactly.\n"
+                "- Only mention Claude tier labels if Christo asks about the picker mapping."
+            )
+        return (
+            "- You are running through Christo's Claude Minimax wrapper.\n"
+            "- Your exact backend model was not injected for this session.\n"
+            "- If asked which model you are, say the backend model is unknown instead of guessing."
+        )
+
+    def _system_frame(self) -> str:
+        return SYSTEM_FRAME_TEMPLATE.format(
+            tools_listing=self.registry.system_prompt_listing(),
+            runtime_identity=self._runtime_identity(),
+        )
+
+    async def reset_session(self) -> None:
+        await self.driver.close_session(OPS_ROOM_ID)
+        self._session_started = False
 
     # ---- Main loop ------------------------------------------------------
 
