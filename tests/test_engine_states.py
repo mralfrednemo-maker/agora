@@ -45,6 +45,12 @@ class DelayedFakeDriver(FakeDriver):
         return await super().send_in_session(room_id, user_message)
 
 
+class KindFakeDriver(FakeDriver):
+    def __init__(self, *args, forced_kind: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.kind = forced_kind
+
+
 async def test_engine_state_transitions_and_persistence() -> None:
     temp_dir = _workspace_tmp("engine-states")
     store = RoomStore(temp_dir / "rooms")
@@ -135,4 +141,168 @@ async def test_set_rounds_enforces_minimum_four(value: int) -> None:
     room = await engine.create_room("topic")
     await engine.set_rounds(room.id, value=value, extend=False)
     assert engine.rooms[room.id].max_total_rounds == 4
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+async def test_exhaustion_loop_max_total_rounds_caps_cycles_not_turns() -> None:
+    temp_dir = _workspace_tmp("exhaustion-cycle-cap")
+    store = RoomStore(temp_dir / "rooms")
+    target_dir = temp_dir / "target"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    dod_file = temp_dir / "dod.md"
+    dod_file.write_text("dod", encoding="utf-8")
+    drivers = {
+        "claude": KindFakeDriver(
+            "claude",
+            "Claude",
+            replies=["fix 1", "fix 2", "fix 3", "fix 4", "fix 5", "fix 6"],
+            cycle=True,
+            forced_kind="claude-code-new",
+        ),
+        "gemini": KindFakeDriver(
+            "gemini",
+            "Gemini",
+            replies=["ZERO FINDINGS", "ZERO FINDINGS", "ZERO FINDINGS"],
+            cycle=True,
+            forced_kind="gemini-cli",
+        ),
+        "codex": KindFakeDriver(
+            "codex",
+            "Codex",
+            replies=["gap 1", "gap 2", "gap 3", "gap 4", "gap 5", "gap 6"],
+            cycle=True,
+            forced_kind="codex",
+        ),
+    }
+    engine = RoomEngine(store=store, drivers=drivers, emit=_noop_emit)
+    room = await engine.create_room(
+        "exhaustion",
+        convergence_name="adversarial-exhaustion",
+        max_total_rounds=2,
+        style="exhaustion-loop",
+        auto_verdict=False,
+        target_file=str(target_dir),
+        dod_file=str(dod_file),
+    )
+    await engine.set_participants(room.id, ["claude", "gemini", "codex"])
+    await engine.start(room.id)
+    await _wait_done(engine, room.id)
+    snapshot = engine.room_snapshot(room.id)
+    assert snapshot["status"] == "done"
+    assert snapshot["warning_detail"] == "max cycles reached before consensus"
+    assert snapshot["exhaustion_cycle"] == 2
+    # max_total_rounds=2 means max 2 complete Claude->Gemini->Codex cycles.
+    # Cycle 1: fix, audit_gemini (ZERO FINDINGS), audit_codex (gap) -> exhaustion_cycle=1
+    # Cycle 2: fix, audit_gemini (ZERO FINDINGS), audit_codex (gap) -> exhaustion_cycle=2
+    # At the next fix entry, the pre-check stops before a third cycle begins.
+    assert len(snapshot["transcript"]) == 6
+    assert [item["phase"] for item in snapshot["transcript"]] == [
+        "fix", "audit_gemini", "audit_codex", "fix", "audit_gemini", "audit_codex",
+    ]
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+async def test_exhaustion_loop_success_counts_completed_codex_cycle() -> None:
+    temp_dir = _workspace_tmp("exhaustion-success-cycle")
+    store = RoomStore(temp_dir / "rooms")
+    target_dir = temp_dir / "target"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    dod_file = temp_dir / "dod.md"
+    dod_file.write_text("dod", encoding="utf-8")
+    drivers = {
+        "claude": KindFakeDriver(
+            "claude",
+            "Claude",
+            replies=["fix 1"],
+            cycle=True,
+            forced_kind="claude-code-new",
+        ),
+        "gemini": KindFakeDriver(
+            "gemini",
+            "Gemini",
+            replies=["ZERO FINDINGS"],
+            cycle=True,
+            forced_kind="gemini-cli",
+        ),
+        "codex": KindFakeDriver(
+            "codex",
+            "Codex",
+            replies=["ZERO FINDINGS"],
+            cycle=True,
+            forced_kind="codex",
+        ),
+    }
+    engine = RoomEngine(store=store, drivers=drivers, emit=_noop_emit)
+    room = await engine.create_room(
+        "exhaustion success",
+        convergence_name="adversarial-exhaustion",
+        max_total_rounds=4,
+        style="exhaustion-loop",
+        auto_verdict=False,
+        target_file=str(target_dir),
+        dod_file=str(dod_file),
+    )
+    await engine.set_participants(room.id, ["claude", "gemini", "codex"])
+    await engine.start(room.id)
+    await _wait_done(engine, room.id)
+    snapshot = engine.room_snapshot(room.id)
+    assert snapshot["status"] == "done"
+    assert snapshot["warning_detail"] is None
+    assert snapshot["exhaustion_cycle"] == 1
+    assert [item["phase"] for item in snapshot["transcript"]] == [
+        "fix", "audit_gemini", "audit_codex",
+    ]
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+async def test_exhaustion_loop_gemini_failures_still_consume_cycle_budget() -> None:
+    temp_dir = _workspace_tmp("exhaustion-gemini-cap")
+    store = RoomStore(temp_dir / "rooms")
+    target_dir = temp_dir / "target"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    dod_file = temp_dir / "dod.md"
+    dod_file.write_text("dod", encoding="utf-8")
+    drivers = {
+        "claude": KindFakeDriver(
+            "claude",
+            "Claude",
+            replies=["fix 1", "fix 2", "fix 3", "fix 4"],
+            cycle=True,
+            forced_kind="claude-code-new",
+        ),
+        "gemini": KindFakeDriver(
+            "gemini",
+            "Gemini",
+            replies=["gap 1", "gap 2", "gap 3", "gap 4"],
+            cycle=True,
+            forced_kind="gemini-cli",
+        ),
+        "codex": KindFakeDriver(
+            "codex",
+            "Codex",
+            replies=["ZERO FINDINGS"],
+            cycle=True,
+            forced_kind="codex",
+        ),
+    }
+    engine = RoomEngine(store=store, drivers=drivers, emit=_noop_emit)
+    room = await engine.create_room(
+        "exhaustion gemini cap",
+        convergence_name="adversarial-exhaustion",
+        max_total_rounds=2,
+        style="exhaustion-loop",
+        auto_verdict=False,
+        target_file=str(target_dir),
+        dod_file=str(dod_file),
+    )
+    await engine.set_participants(room.id, ["claude", "gemini", "codex"])
+    await engine.start(room.id)
+    await _wait_done(engine, room.id)
+    snapshot = engine.room_snapshot(room.id)
+    assert snapshot["status"] == "done"
+    assert snapshot["warning_detail"] == "max cycles reached before consensus"
+    assert snapshot["exhaustion_cycle"] == 2
+    assert [item["phase"] for item in snapshot["transcript"]] == [
+        "fix", "audit_gemini", "fix", "audit_gemini",
+    ]
     shutil.rmtree(temp_dir, ignore_errors=True)

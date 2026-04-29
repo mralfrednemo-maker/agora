@@ -15,14 +15,19 @@ dist/
 .env
 .env.local
 *.log
+logs/
 
 # Runtime data (regenerated at runtime)
 data/rooms/
 data/ops/
 data/driver-state/
+data/live-handover/
 data/m3-dry-run-*/
 data/verification/
+data/primary-pair-runs/
+data/test-debug*/
 data/test-temp/
+data/gateway-url.txt
 
 # Editor
 .vscode/

@@ -118,13 +118,18 @@ class ClaudeCodeResumeDriver(Driver):
 
     async def _run_claude(self, prompt: str, room_id: str, session_id: str) -> DriverReply:
         cmd = [
-            "claude",
-            "--print",
-            "--verbose",
-            "--output-format",
-            "stream-json",
-            "--resume",
-            session_id,
+            "powershell.exe",
+            "-ExecutionPolicy", "Bypass",
+            "-NoProfile",
+            "-Command",
+            (
+                "& 'C:\\Users\\chris\\PROJECTS\\scripts\\claude-code-router.ps1' "
+                "-Provider minimax "
+                "--model MiniMax-M2.7-highspeed "
+                "--dangerously-skip-permissions "
+                "--print --verbose --output-format stream-json "
+                f"--resume {session_id}"
+            ),
         ]
         lock = await self._acquire_lock(session_id)
         try:

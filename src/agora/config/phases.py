@@ -108,10 +108,50 @@ CRITIC_TERMINATE_PHASES: list[Phase] = [
     ),
 ]
 
+EXHAUSTION_LOOP_PHASES: list[Phase] = [
+    Phase(
+        name="fix",
+        mode="serial",
+        max_rounds=1,
+        include_opponents=False,
+        instruction_template=(
+            "You are the Fixer. Read the Target Directory and the DoD document. "
+            "Identify and fix all gaps across the codebase to ensure it 100% meets the DoD. "
+            "Apply the changes immediately."
+        ),
+    ),
+    Phase(
+        name="audit_gemini",
+        mode="serial",
+        max_rounds=1,
+        include_opponents=False,
+        instruction_template=(
+            "You are the First Auditor (Gemini). Run a comprehensive gap analysis between the "
+            "Target Directory and the DoD document. Use `ls -R` and `git diff` to ground your analysis. "
+            "If the codebase is perfect, your last line must read exactly: ZERO FINDINGS. "
+            "Otherwise, list the specific gaps found."
+        ),
+    ),
+    Phase(
+        name="audit_codex",
+        mode="serial",
+        max_rounds=1,
+        include_opponents=False,
+        instruction_template=(
+            "You are the Final Validator (Codex). Run a comprehensive gap analysis between the "
+            "Target Directory and the DoD document. Use `ls -R` and `git diff` to ground your analysis. "
+            "If the codebase is perfect, your last line must read exactly: ZERO FINDINGS. "
+            "Otherwise, list the specific gaps found."
+        ),
+    ),
+]
+
 DEFAULT_STYLE = "ein-mdp"
 STYLE_ROUND_CAPS: dict[str, int] = {
     "ein-mdp": 5,
     "critic-terminate": 15,
+    "primary-pair": 12,
+    "exhaustion-loop": 50,
 }
 MIN_TOTAL_ROUNDS = 4
 DEFAULT_TOTAL_ROUNDS = 5
@@ -140,6 +180,8 @@ def phases_for_style(style: str, max_total_rounds: int) -> list[Phase]:
     debate_rounds = max(1, total - 3)
     if selected_style == "critic-terminate":
         return _clone_with_debate_rounds(CRITIC_TERMINATE_PHASES, debate_rounds)
+    if selected_style == "exhaustion-loop":
+        return EXHAUSTION_LOOP_PHASES
     return _clone_with_debate_rounds(EIN_MDP_PHASES, debate_rounds)
 
 
@@ -150,7 +192,7 @@ def phases_for_total_rounds(max_total_rounds: int) -> list[Phase]:
 
 def phase_by_name(name: str) -> Phase | None:
     lowered = name.strip().lower()
-    for phase in EIN_MDP_PHASES + CRITIC_TERMINATE_PHASES:
+    for phase in EIN_MDP_PHASES + CRITIC_TERMINATE_PHASES + EXHAUSTION_LOOP_PHASES:
         if phase.name == lowered:
             return phase
     return None

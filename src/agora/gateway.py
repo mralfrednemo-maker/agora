@@ -3,7 +3,7 @@ from __future__ import annotations
 import mimetypes
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 # Windows' default mimetypes registry serves .js as text/plain, which Chrome
 # rejects for ES modules. Register the correct types at import time.
@@ -18,14 +18,20 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agora.config.phases import MIN_TOTAL_ROUNDS, STYLE_ROUND_CAPS
+
+# Styles defined in the M3 spec
+SPEC_STYLES = ("ein-mdp", "critic-terminate", "primary-pair")
 from agora.commands.handlers import CommandContext, CommandHandler
 from agora.drivers.chatgpt_web import ChatGPTWebDriver
 from agora.drivers.claude_code_new import ClaudeCodeNewDriver
+from agora.drivers.anthropic_code import AnthropicCodeDriver
 from agora.drivers.claude_web import ClaudeWebDriver
 from agora.drivers.codex import CodexDriver
+from agora.drivers.base import DriverError
 from agora.drivers.gemini_cli import GeminiCliDriver
 from agora.drivers.gemini_web import GeminiWebDriver
 from agora.drivers.openclaw import OpenClawDriver
+from agora.engine.live_handover import LiveHandoverService
 from agora.engine.room import RoomEngine
 from agora.ops.admin import OpsManager
 from agora.ops.engine_tools import (
@@ -33,6 +39,7 @@ from agora.ops.engine_tools import (
     register_telegram_tools,
     register_whatsapp_tools,
 )
+from agora.persistence.live_handover_store import LiveHandoverStore
 from agora.persistence.store import RoomStore
 from agora.web.api import ApiService
 from agora.web.ws import WsHub
@@ -47,8 +54,13 @@ class StartRoomBody(BaseModel):
     participants: list[str]
     max_total_rounds: int
     convergence: str = "agree-marker"
-    style: Literal["ein-mdp", "critic-terminate"] = "ein-mdp"
+    style: str = "ein-mdp"
     auto_verdict: bool = True
+    target_file: str | None = None
+    dod_file: str | None = None
+    ui_mode: str | None = None
+    role_assignments: list[dict[str, object]] | None = None
+    workflow_notes: str | None = None
 
 
 class RegenerateBody(BaseModel):
@@ -62,6 +74,44 @@ class FollowUpBody(BaseModel):
 
 class CommandBody(BaseModel):
     text: str
+
+
+class AttachLiveLinkBody(BaseModel):
+    label: str
+    driver_id: str
+    external_session_ref: str
+
+
+class LiveHandoverBody(BaseModel):
+    goal: str
+    interviewer_link_id: str
+    source_link_id: str
+    max_interview_turns: int = 3
+    max_total_wakes: int = 8
+    max_invalid_outputs_per_agent: int = 2
+    max_runtime_minutes: int = 10
+
+
+class AskAgentBody(BaseModel):
+    question: str
+    source_driver_id: str
+    source_session_ref: str
+    source_label: str | None = None
+    interviewer_driver_id: str = "codex-1"
+    interviewer_session_ref: str | None = None
+    interviewer_label: str | None = None
+    max_interview_turns: int = 1
+    max_total_wakes: int = 4
+    max_invalid_outputs_per_agent: int = 2
+    max_runtime_minutes: int = 10
+
+
+class AgentMessageBody(BaseModel):
+    to_link_id: str
+    body: str
+    from_link_id: str | None = None
+    subject: str | None = None
+    requires_ack: bool = True
 
 
 class OpsMessageBody(BaseModel):
@@ -88,9 +138,15 @@ def build_app() -> FastAPI:
     base_dir = Path("C:/Users/chris/PROJECTS/agora")
     static_dir = base_dir / "src" / "agora" / "web" / "static"
     store = RoomStore(base_dir=base_dir / "data" / "rooms")
+    live_handover_store = LiveHandoverStore(base_dir / "data" / "live-handover")
 
     drivers: dict[str, Any] = {
-        "claude-code-new-1": ClaudeCodeNewDriver(id="claude-code-new-1", display_name="Claude Code New"),
+        "anthropic-code-1": AnthropicCodeDriver(id="anthropic-code-1", display_name="Anthropic Code"),
+        "claude-code-new-1": ClaudeCodeNewDriver(
+            id="claude-code-new-1",
+            display_name="Claude MiniMax",
+            model="MiniMax-M2.7-highspeed",
+        ),
         "codex-1": CodexDriver(id="codex-1", display_name="Codex"),
         "gemini-cli-1": GeminiCliDriver(id="gemini-cli-1", display_name="Gemini CLI"),
         "chatgpt-web-1": ChatGPTWebDriver(),
@@ -125,7 +181,8 @@ def build_app() -> FastAPI:
     ws_hub = WsHub()
     engine = RoomEngine(store=store, drivers=drivers, emit=ws_hub.broadcast)
     commands = CommandHandler(engine=engine, context=CommandContext())
-    api = ApiService(engine=engine, commands=commands, driver_health={})
+    live_handover = LiveHandoverService(store=live_handover_store, drivers=drivers)
+    api = ApiService(engine=engine, commands=commands, driver_health={}, live_handover=live_handover)
     ops = OpsManager.create(driver=admin_driver, emit=ws_hub.broadcast)
     register_engine_tools(ops.registry, engine)
     register_telegram_tools(ops.registry)
@@ -141,9 +198,16 @@ def build_app() -> FastAPI:
     @app.on_event("startup")
     async def startup() -> None:
         for driver in drivers.values():
-            ok, detail = await driver.health_check()
-            api.driver_health[driver.id] = {"ok": ok, "detail": detail}
-        await admin_driver.health_check()
+            try:
+                ok, detail = await driver.health_check()
+                api.driver_health[driver.id] = {"ok": ok, "detail": detail}
+            except Exception as exc:
+                api.driver_health[driver.id] = {"ok": False, "detail": str(exc)}
+        try:
+            await admin_driver.health_check()
+        except Exception as exc:
+            # Log but don't crash startup; ops will report its own health state.
+            print(f"Admin driver health check failed: {exc}")
         await engine.restore_rooms()
 
     @app.get("/")
@@ -179,11 +243,30 @@ def build_app() -> FastAPI:
 
     @app.post("/api/rooms/start")
     async def start_room(body: StartRoomBody) -> dict[str, object]:
+        if body.style not in SPEC_STYLES and body.style != "exhaustion-loop":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown style '{body.style}'. Known styles: {list(SPEC_STYLES)}",
+            )
         for driver_id in body.participants:
             if driver_id not in drivers:
                 raise HTTPException(status_code=400, detail=f"Unknown participant: {driver_id}")
         if not body.participants:
             raise HTTPException(status_code=400, detail="participants cannot be empty")
+        if body.style == "exhaustion-loop":
+            if len(body.participants) != 3:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Exhaustion Loop requires exactly 3 participants (claude-code-new, gemini-cli, codex). Got {len(body.participants)}.",
+                )
+            kinds = {drivers[did].kind for did in body.participants}
+            required = {"claude-code-new", "gemini-cli", "codex"}
+            missing = required - kinds
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Exhaustion Loop requires one each of claude-code-new, gemini-cli, and codex participants. Missing kinds: {sorted(missing)}",
+                )
         validate_max_total_rounds(body.style, body.max_total_rounds)
         return await api.start_room(
             topic=body.topic,
@@ -192,6 +275,11 @@ def build_app() -> FastAPI:
             convergence=body.convergence,
             style=body.style,
             auto_verdict=body.auto_verdict,
+            target_file=body.target_file,
+            dod_file=body.dod_file,
+            ui_mode=body.ui_mode,
+            role_assignments=body.role_assignments,
+            workflow_notes=body.workflow_notes,
         )
 
     @app.post("/api/rooms/{room_id}/regenerate-verdict")
@@ -243,6 +331,132 @@ def build_app() -> FastAPI:
     @app.get("/api/drivers")
     async def drivers_endpoint() -> dict[str, object]:
         return await api.list_drivers()
+
+    @app.get("/api/fs/ls")
+    async def list_fs(path: str = ".") -> dict[str, object]:
+        return await api.list_filesystem(path)
+
+    @app.get("/api/live-links")
+    async def list_live_links() -> dict[str, object]:
+        return await api.list_live_links()
+
+    @app.post("/api/live-links/attach")
+    async def attach_live_link(body: AttachLiveLinkBody) -> dict[str, object]:
+        try:
+            return await api.attach_live_link(
+                label=body.label,
+                driver_id=body.driver_id,
+                external_session_ref=body.external_session_ref,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except DriverError as exc:
+            raise HTTPException(status_code=502, detail=f"driver failed: {exc}") from exc
+
+    @app.post("/api/live-handover/workflows")
+    async def run_live_handover(body: LiveHandoverBody) -> dict[str, object]:
+        try:
+            return await api.run_live_handover(
+                goal=body.goal,
+                interviewer_link_id=body.interviewer_link_id,
+                source_link_id=body.source_link_id,
+                max_interview_turns=body.max_interview_turns,
+                max_total_wakes=body.max_total_wakes,
+                max_invalid_outputs_per_agent=body.max_invalid_outputs_per_agent,
+                max_runtime_minutes=body.max_runtime_minutes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except DriverError as exc:
+            raise HTTPException(status_code=502, detail=f"driver failed: {exc}") from exc
+
+    @app.get("/api/live-handover/workflows/{workflow_id}")
+    async def get_live_handover_workflow(workflow_id: str) -> dict[str, object]:
+        try:
+            return await api.get_live_handover_workflow(workflow_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/live-handover/workflows/{workflow_id}/audit")
+    async def get_live_handover_audit(workflow_id: str) -> dict[str, object]:
+        try:
+            return await api.get_live_handover_audit(workflow_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/ask-agent")
+    async def ask_agent(body: AskAgentBody) -> dict[str, object]:
+        try:
+            return await api.ask_agent(
+                question=body.question,
+                source_driver_id=body.source_driver_id,
+                source_session_ref=body.source_session_ref,
+                source_label=body.source_label,
+                interviewer_driver_id=body.interviewer_driver_id,
+                interviewer_session_ref=body.interviewer_session_ref,
+                interviewer_label=body.interviewer_label,
+                max_interview_turns=body.max_interview_turns,
+                max_total_wakes=body.max_total_wakes,
+                max_invalid_outputs_per_agent=body.max_invalid_outputs_per_agent,
+                max_runtime_minutes=body.max_runtime_minutes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except DriverError as exc:
+            raise HTTPException(status_code=502, detail=f"driver failed: {exc}") from exc
+
+    @app.post("/api/agent-messages")
+    async def send_agent_message(body: AgentMessageBody) -> dict[str, object]:
+        try:
+            return await api.send_agent_message(
+                from_link_id=body.from_link_id,
+                to_link_id=body.to_link_id,
+                subject=body.subject,
+                body=body.body,
+                requires_ack=body.requires_ack,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/agent-messages")
+    async def list_agent_messages(
+        to_link_id: str | None = None,
+        status: str | None = None,
+        include_terminal: bool = True,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        try:
+            return await api.list_agent_messages(
+                to_link_id=to_link_id,
+                status=status,
+                include_terminal=include_terminal,
+                limit=limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/agent-messages/{message_id}/read")
+    async def mark_agent_message_read(message_id: str) -> dict[str, object]:
+        try:
+            return await api.mark_agent_message_read(message_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/agent-messages/{message_id}/ack")
+    async def acknowledge_agent_message(message_id: str) -> dict[str, object]:
+        try:
+            return await api.acknowledge_agent_message(message_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/agent-links/{to_link_id}/process-inbox-once")
+    async def process_agent_inbox_once(to_link_id: str) -> dict[str, object]:
+        try:
+            return await api.process_agent_inbox_once(to_link_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except DriverError as exc:
+            raise HTTPException(status_code=502, detail=f"driver failed: {exc}") from exc
 
     # ---- Ops (admin agent) -----------------------------------------------
 
@@ -408,4 +622,6 @@ app = build_app()
 
 
 if __name__ == "__main__":
-    uvicorn.run("agora.gateway:app", host="127.0.0.1", port=8789, reload=False)
+    host = os.environ.get("AGORA_BIND_HOST", "127.0.0.1")
+    port = int(os.environ.get("AGORA_PORT", "8890"))
+    uvicorn.run("agora.gateway:app", host=host, port=port, reload=False)

@@ -27,7 +27,7 @@ class ConvergenceCheck:
             threshold = ceil(len(entries) / 2)
             terminate_votes = sum(1 for entry in entries if _last_non_empty_line(entry.content) == "TERMINATE")
             return terminate_votes >= threshold
-        if lowered == "none":
+        if lowered == "none" or lowered == "adversarial-exhaustion":
             return False
         raise ValueError(f"Unknown convergence check: {self.name}")
 

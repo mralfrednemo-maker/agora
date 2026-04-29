@@ -3,128 +3,350 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Agora Dashboard</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <title>Agora</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/static/style.css?v=20260430a" />
 </head>
-<body>
-  <nav class="tabs">
-    <button class="tab-btn active" data-tab="debates">Debates</button>
-    <button class="tab-btn" data-tab="ops">Ops</button>
-  </nav>
-  <main class="layout" data-tab="debates">
-    <section class="pane rooms" aria-label="Rooms pane">
-      <div class="rooms-head">
-        <h2>Rooms</h2>
-        <button id="openNewDebateBtn" class="primary-btn" type="button">+ New Debate</button>
+<body data-view="debates">
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark">A</div>
+      <div>
+        <div class="brand-title">Agora</div>
+        <div class="brand-subtitle">Local debate gateway</div>
       </div>
-      <div id="roomsActive"></div>
+    </div>
+
+    <nav class="tabs" aria-label="Primary">
+      <button class="tab-btn active" data-tab="debates" type="button">Debates</button>
+      <button class="tab-btn" data-tab="war-room" type="button">War Room</button>
+      <button class="tab-btn" data-tab="ops" type="button">Ops</button>
+    </nav>
+
+    <div class="topbar-status">
+      <span id="setStatus" class="status-dot"></span>
+      <span id="wsState">WS connecting</span>
+      <span id="activeRoomState">No room</span>
+    </div>
+  </header>
+
+  <main class="layout" data-tab="debates">
+    <aside class="pane rooms" aria-label="Rooms">
+      <div class="pane-head">
+        <div>
+          <h2>Rooms</h2>
+          <p id="roomsCount">0 active</p>
+        </div>
+        <div class="room-head-actions">
+          <button id="toggleRoomsBtn" class="ghost-btn compact-toggle" type="button" title="Collapse rooms">Hide</button>
+          <button id="openNewDebateBtn" class="primary-btn" type="button">New</button>
+        </div>
+      </div>
+
+      <div id="roomsActive" class="room-list"></div>
+
       <details id="archivedRoomsDetails" class="archived-wrap">
         <summary>Archived</summary>
-        <div id="roomsArchived"></div>
+        <div id="roomsArchived" class="room-list archived-list"></div>
       </details>
-    </section>
+    </aside>
 
-    <section class="pane transcript" aria-label="Transcript pane">
-      <div id="transcriptHeader" class="debate-header"></div>
-      <div class="transcript-head">
-        <h2>Transcript</h2>
+    <section class="pane transcript" aria-label="Transcript">
+      <div id="transcriptHeader" class="debate-header hidden"></div>
+      <div class="pane-head transcript-head">
+        <div>
+          <h2>Transcript</h2>
+          <p id="transcriptMeta">No room selected</p>
+        </div>
         <div id="participantLegend" class="participant-legend"></div>
       </div>
+
       <div id="transcriptWrap" class="transcript-wrap">
-        <div id="transcript"></div>
-        <button id="newMessagesPill" class="new-messages hidden" type="button">↓ new messages</button>
+        <div id="transcript" class="transcript-stream"></div>
+        <button id="newMessagesPill" class="new-messages hidden" type="button">New messages</button>
       </div>
     </section>
 
-    <section class="pane command" aria-label="Command pane">
-      <div class="command-head">
-        <h2>Command</h2>
-        <span class="help-tip" title="Most room controls are in the transcript header buttons. Use slash commands for power-user actions.">?</span>
+    <section id="warRoomPanel" class="pane war-room-panel" aria-label="War Room">
+      <div id="warRoomPlaceholder" class="empty-state">
+        <div class="empty-title">No room selected</div>
+        <div class="empty-text">Choose a room from the rail.</div>
       </div>
-      <input id="commandInput" type="text" placeholder="/inject Focus on concrete tradeoffs" autocomplete="off" />
+
+      <div id="warRoomContent" class="war-room-content hidden">
+        <section id="warRoomNoMonitor" class="monitor-note hidden">
+          <strong>No dedicated monitor for this mode yet.</strong>
+          <span>Use the transcript view for the detailed conversation.</span>
+        </section>
+
+        <div id="warRoomClassic" class="war-room-classic hidden">
+        <div class="cockpit-header">
+          <div class="mission-info">
+            <div class="info-group">
+              <span class="info-label">Target</span>
+              <span id="cockpitTarget" class="info-value">--</span>
+            </div>
+            <div class="info-group">
+              <span class="info-label">DoD</span>
+              <span id="cockpitDod" class="info-value">--</span>
+            </div>
+          </div>
+          <div id="cockpitControls" class="header-actions"></div>
+        </div>
+
+        <div id="warRoomVisual" class="war-room-visual">
+          <div id="warRoomChain" class="chain-wrap">
+            <div id="nodeFix" class="chain-node" data-phase="fix">
+              <span class="node-kicker">Step 1</span>
+              <strong>Fix</strong>
+              <small>Claude Code</small>
+            </div>
+            <div class="chain-connector"></div>
+            <div id="nodeAuditGemini" class="chain-node" data-phase="audit_gemini">
+              <span class="node-kicker">Step 2</span>
+              <strong>Audit</strong>
+              <small>Gemini CLI</small>
+            </div>
+            <div class="chain-connector"></div>
+            <div id="nodeAuditCodex" class="chain-node" data-phase="audit_codex">
+              <span class="node-kicker">Step 3</span>
+              <strong>Validate</strong>
+              <small>Codex</small>
+            </div>
+            <div id="arrowGeminiGap" class="loop-arrow hidden">Gemini findings return to fix</div>
+            <div id="arrowCodexGap" class="loop-arrow hidden">Findings return to fix</div>
+          </div>
+        </div>
+
+        <div class="war-grid">
+          <section class="console neural-link">
+            <div class="console-head">Reasoning Trace</div>
+            <div class="neural-grid">
+              <div class="neural-slot" data-kind="claude-code-new">
+                <div class="slot-head">Claude</div>
+                <div id="thoughtClaude" class="slot-body">Waiting.</div>
+              </div>
+              <div class="neural-slot" data-kind="gemini-cli">
+                <div class="slot-head">Gemini</div>
+                <div id="thoughtGemini" class="slot-body">Waiting.</div>
+              </div>
+              <div class="neural-slot" data-kind="codex">
+                <div class="slot-head">Codex</div>
+                <div id="thoughtCodex" class="slot-body">Waiting.</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="console findings-console">
+            <div class="console-head">Latest Findings</div>
+            <div id="cockpitFindings" class="console-body">Waiting for audit.</div>
+          </section>
+
+          <section class="console mission-log">
+            <div class="console-head">Mission Log</div>
+            <div id="cockpitLog" class="console-body log-small">No events.</div>
+          </section>
+
+          <section id="warRoomStats" class="war-room-stats">
+            <div class="stat-item">
+              <span class="stat-label">Progress</span>
+              <div class="progress-bar"><div id="stabilityBar" class="progress-fill"></div></div>
+            </div>
+            <div class="stat-item stat-compact">
+              <span class="stat-label">Cycles</span>
+              <span id="cycleCount" class="stat-value">0</span>
+            </div>
+          </section>
+        </div>
+        </div>
+
+        <div id="warRoomPi" class="war-room-pi hidden">
+          <div class="cockpit-header">
+            <div class="mission-info">
+              <div class="info-group">
+                <span class="info-label">Mode</span>
+                <span id="piModeLabel" class="info-value">--</span>
+              </div>
+              <div class="info-group">
+                <span class="info-label">Workflow</span>
+                <span id="piWorkflowLabel" class="info-value">--</span>
+              </div>
+            </div>
+            <div id="piControls" class="header-actions"></div>
+          </div>
+
+          <div class="pi-workspace">
+            <aside id="warRoomOverview" class="room-overview"></aside>
+            <section id="piSecondaryPanel" class="console pi-secondary-panel">
+              <div class="console-head">
+                <span id="piSecondaryTitle">LLM3</span>
+                <span id="piSecondaryMeta" class="console-head-meta">Waiting</span>
+              </div>
+              <div id="piSecondaryBody" class="console-body">No LLM3 turn yet.</div>
+              <div id="piSecondaryResize" class="pi-secondary-resize" aria-label="Resize secondary panel" title="Drag to resize">
+                <span class="pi-secondary-resize-label">Drag to resize</span>
+              </div>
+            </section>
+
+            <div class="pi-columns">
+            <section class="console pi-thread">
+              <div class="console-head">
+                <span id="piPrimaryATitle">LLM1</span>
+                <span id="piPrimaryAMeta" class="console-head-meta">Waiting</span>
+              </div>
+              <div id="piPrimaryABody" class="console-body pi-thread-body">No LLM1 turn yet.</div>
+            </section>
+
+            <section class="console pi-thread">
+              <div class="console-head">
+                <span id="piPrimaryBTitle">LLM2</span>
+                <span id="piPrimaryBMeta" class="console-head-meta">Waiting</span>
+              </div>
+              <div id="piPrimaryBBody" class="console-body pi-thread-body">No LLM2 turn yet.</div>
+            </section>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="pane command" aria-label="Command">
+      <div class="pane-head">
+        <div>
+          <h2>Command</h2>
+          <p id="commandScope">No room selected</p>
+        </div>
+      </div>
+      <form id="commandForm" class="command-form">
+        <input id="commandInput" type="text" placeholder="/inject ..." autocomplete="off" />
+        <button class="secondary-btn" type="submit">Run</button>
+      </form>
       <div id="commandHint" class="command-hint"></div>
       <div id="status" class="status status-info">Ready.</div>
-    </section>
+    </aside>
   </main>
 
+  <section id="opsPanel" class="ops-panel" aria-label="Ops">
+    <div class="ops-shell">
+      <header class="ops-head">
+        <div>
+          <h2>Ops</h2>
+          <p>Admin agent</p>
+        </div>
+        <select id="opsModelSelect" class="ops-model-select" aria-label="Ops model"></select>
+      </header>
+
+      <div id="opsTranscript" class="ops-transcript"></div>
+
+      <form id="opsForm" class="ops-form">
+        <textarea id="opsInput" placeholder="Message Ops" rows="1"></textarea>
+        <div class="ops-actions">
+          <button type="button" id="opsMicBtn" class="icon-btn" title="Record">Mic</button>
+          <button type="submit" class="primary-btn">Send</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
   <dialog id="newDebateModal" class="modal">
-    <form id="newDebateForm" method="dialog" class="modal-body">
-      <h3>New Debate</h3>
-      <label class="form-label" for="topicInput">Topic</label>
-      <textarea id="topicInput" rows="3" maxlength="1000" required placeholder="Is Python better than Go for backend services?"></textarea>
+    <form id="newDebateForm" method="dialog">
+      <header class="modal-head">
+        <div>
+          <h2>New Room</h2>
+          <p id="modalModeLabel">Debate setup</p>
+        </div>
+      </header>
 
-      <fieldset class="form-fieldset">
-        <legend>Participants</legend>
-        <div id="participantsList"></div>
-      </fieldset>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="topicInput">Brief</label>
+          <textarea id="topicInput" rows="4" placeholder="Brief"></textarea>
+        </div>
 
-      <label class="form-label" for="styleInput">Debate style</label>
-      <select id="styleInput">
-        <option value="ein-mdp">ein-mdp (4 fixed phases)</option>
-        <option value="critic-terminate">critic-terminate (ends on TERMINATE majority)</option>
-      </select>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="modeInput">Mode</label>
+            <select id="modeInput">
+              <option value="primary-pair">Primary Pair</option>
+              <option value="code-audit-loop">Code Audit Loop</option>
+            </select>
+          </div>
+          <div id="roundsRow" class="form-group">
+            <label id="roundsFieldLabel" class="form-label" for="roundsInput">Limit</label>
+            <input id="roundsInput" type="range" min="4" max="50" value="5" />
+            <div id="roundsLabel" class="rounds-label">5 rounds</div>
+          </div>
+        </div>
 
-      <div id="roundsRow" class="form-row hidden">
-        <label class="form-label" for="roundsInput">Max total rounds</label>
-        <input id="roundsInput" type="range" min="4" max="15" value="8" />
-        <div id="roundsLabel" class="rounds-label"></div>
+        <div class="form-group">
+          <label class="form-label">Participants</label>
+          <div id="roleCards" class="role-cards"></div>
+        </div>
+
+        <div id="workflowFields" class="workflow-fields hidden">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="targetFileInput">Target Directory</label>
+              <div class="input-with-action">
+                <input id="targetFileInput" type="text" placeholder="Target directory" />
+                <button type="button" class="icon-btn" id="pickTargetBtn" title="Browse">Browse</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="dodFileInput">DoD Document</label>
+              <div class="input-with-action">
+                <input id="dodFileInput" type="text" placeholder="DoD document" />
+                <button type="button" class="icon-btn" id="pickDodBtn" title="Browse">Browse</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="workflowNotesInput">Workflow Notes</label>
+            <textarea id="workflowNotesInput" rows="3" placeholder="Optional notes about how the room should run."></textarea>
+          </div>
+        </div>
+
+        <details class="advanced-panel">
+          <summary>Advanced</summary>
+          <div class="advanced-panel-body">
+            <label class="check-row">
+              <input id="autoVerdictInput" type="checkbox" checked />
+              <span>Auto-generate final document</span>
+            </label>
+
+            <div id="participantsList" class="participant-picker hidden"></div>
+          </div>
+        </details>
       </div>
 
-      <!-- Convergence check is auto-wired per style: agree-marker for ein-mdp, terminate-majority for critic-terminate. No user control needed. -->
-      <input id="convergenceInput" type="hidden" value="agree-marker" />
-
-      <label class="toggle-row" for="autoVerdictInput">
-        <input id="autoVerdictInput" type="checkbox" checked />
-        <span>Auto-generate verdict when debate ends</span>
-      </label>
-
-      <div class="modal-actions">
+      <footer class="modal-actions">
         <button id="cancelNewDebateBtn" type="button" class="ghost-btn">Cancel</button>
-        <button id="startDebateBtn" type="submit" class="primary-btn">Start Debate</button>
-      </div>
+        <button id="startDebateBtn" type="submit" class="primary-btn">Start</button>
+      </footer>
     </form>
   </dialog>
 
-  <section id="opsPanel" class="ops-panel hidden" aria-label="Ops pane">
-    <div class="ops-head">
-      <h2>Ops — Admin Agent</h2>
-      <div class="ops-controls">
-        <label class="toggle-row small">
-          <span>Model:</span>
-          <select id="opsModelSelect" title="All models are 200K context. 1M Opus is refused — see tech-library.">
-            <option value="claude-haiku-4-5">Haiku tier -> MiniMax M2.7</option>
-            <option value="claude-sonnet-4-6">Sonnet tier -> MiniMax M2.7</option>
-            <option value="claude-opus-4-7">Opus tier -> MiniMax M2.7-highspeed</option>
-          </select>
-        </label>
-        <button id="opsMicBtn" class="ghost-btn" type="button" title="Hold to talk">🎤 Hold to talk</button>
-        <label class="toggle-row small">
-          <input id="opsVoiceReplies" type="checkbox" />
-          <span>Speak replies</span>
-        </label>
+  <dialog id="explorerModal" class="modal explorer-modal">
+    <div class="modal-head">
+      <div>
+        <h2>File Browser</h2>
+        <p id="explorerCurrentPath">.</p>
       </div>
     </div>
-    <details id="opsInboxDetails" class="ops-inbox">
-      <summary>
-        📨 Inbox — <span id="opsInboxCount">0</span> messages
-        <small>(Telegram + WhatsApp inbound, hidden from main chat)</small>
-      </summary>
-      <div id="opsInboxList"></div>
-    </details>
-    <div id="opsTranscript" class="ops-transcript"></div>
-    <form id="opsForm" class="ops-composer">
-      <textarea id="opsInput" rows="2" placeholder="Talk to Ops..." required></textarea>
-      <button class="primary-btn" type="submit">Send</button>
-    </form>
-    <audio id="opsAudio" style="display:none;"></audio>
-  </section>
+    <div class="modal-body">
+      <div id="explorerList" class="explorer-list"></div>
+    </div>
+    <footer class="modal-actions">
+      <button type="button" class="ghost-btn" id="cancelExplorerBtn">Cancel</button>
+    </footer>
+  </dialog>
 
-  <div id="footerStatus" class="footer-status" aria-live="polite">
-    <span id="wsState">WS: connecting</span>
-    <span id="activeRoomState">Room: none</span>
-    <span id="lastEventState">Last event: --</span>
-  </div>
+  <footer class="footer-status">
+    <span id="footerStatus">Ready.</span>
+    <span id="lastEventState">Last event: none</span>
+  </footer>
 
-  <script type="module" src="/app.mjs"></script>
+  <script type="module" src="/app.mjs?v=20260430a"></script>
 </body>
 </html>

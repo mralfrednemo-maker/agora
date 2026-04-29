@@ -29,7 +29,8 @@ def test_delta_template_with_opponents() -> None:
         phase_instruction="Respond directly.",
     )
     text = renderer.render_delta(payload)
-    assert "Opponents' latest contributions:" in text
+    assert "[YOUR LAST CONTRIBUTION — PREVIOUS ROUND]" in text
+    assert "[OPPONENTS' LAST CONTRIBUTIONS — PREVIOUS ROUND]" in text
     assert "--- Bob ---" in text
     assert "Counterpoint." in text
     assert "[PHASE - debate, round 2]" in text
@@ -45,5 +46,6 @@ def test_delta_template_without_opponents() -> None:
         phase_instruction="Opening statement.",
     )
     text = renderer.render_delta(payload)
-    assert "Opponents' latest contributions:" not in text
+    assert "[YOUR LAST CONTRIBUTION — PREVIOUS ROUND]" in text
+    assert "[OPPONENTS' LAST CONTRIBUTIONS — PREVIOUS ROUND]" not in text
     assert "Opening statement." in text

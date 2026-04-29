@@ -28,21 +28,20 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 @dataclass(slots=True)
-class ClaudeCodeNewDriver(Driver):
+class AnthropicCodeDriver(Driver):
     id: str
     display_name: str
     token_ceiling: int = 180_000
     timeout_s: int = 300
-    model: str | None = None  # None = Claude Code's own default; set via --model flag
+    model: str | None = None  # None = Anthropic Code's own default; set via --model flag
     sessions: dict[str, str] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
-        self.kind = "claude-code-new"
+        self.kind = "anthropic-code"
         self._state_root = Path("C:/Users/chris/PROJECTS/agora/data/driver-state") / self.id
         self._sessions_dir = self._state_root / "sessions"
         self._sessions_dir.mkdir(parents=True, exist_ok=True)
         self._bootstrap_replies: dict[str, DriverReply] = {}
-        self._session_cwds: dict[str, Path] = {}
         self._rehydrate_sessions()
 
     def _rehydrate_sessions(self) -> None:
@@ -59,19 +58,9 @@ class ClaudeCodeNewDriver(Driver):
         return self._sessions_dir / f"{room_id}.json"
 
     def _room_cwd(self, room_id: str) -> Path:
-        override = self._session_cwds.get(room_id)
-        if override is not None:
-            override.mkdir(parents=True, exist_ok=True)
-            return override
         path = self._state_root / f"room-{room_id}"
         path.mkdir(parents=True, exist_ok=True)
         return path
-
-    def set_session_cwd(self, room_id: str, cwd: str | Path | None) -> None:
-        if cwd is None:
-            self._session_cwds.pop(room_id, None)
-            return
-        self._session_cwds[room_id] = Path(cwd).resolve()
 
     def _persist_session(self, room_id: str, session_id: str) -> None:
         _atomic_write_json(
@@ -85,8 +74,8 @@ class ClaudeCodeNewDriver(Driver):
 
     def _router_command(self, session_id: str | None = None) -> str:
         parts = [
-            "& 'C:\\Users\\chris\\PROJECTS\\scripts\\claude-code-router.ps1'",
-            "-Provider minimax",
+            "& 'C:/Users/chris/PROJECTS/scripts/anthropic-code-router.ps1'",
+            "-Provider anthropic",
         ]
         if self.model:
             parts.append(f"--model {self.model}")
@@ -100,7 +89,7 @@ class ClaudeCodeNewDriver(Driver):
             parts.append(f"--resume {session_id}")
         return " ".join(parts)
 
-    async def _run_claude(self, prompt: str, room_id: str, session_id: str | None = None) -> DriverReply:
+    async def _run_anthropic(self, prompt: str, room_id: str, session_id: str | None = None) -> DriverReply:
         cmd = [
             "powershell.exe",
             "-ExecutionPolicy", "Bypass",
@@ -146,7 +135,7 @@ class ClaudeCodeNewDriver(Driver):
         err = stderr.decode("utf-8", errors="replace")
         if proc.returncode != 0:
             raise DriverError(
-                f"claude --print exit {proc.returncode}: "
+                f"anthropic --print exit {proc.returncode}: "
                 f"{(err.strip() or output.strip())[:500]}"
             )
         content = self._extract_text(output)
@@ -162,10 +151,10 @@ class ClaudeCodeNewDriver(Driver):
         # treats the frame as the Phase 1 prompt so the frame's reply IS the
         # first turn. If False (ops use-case), the reply is discarded so the
         # user's first real message produces a fresh response.
-        reply = await self._run_claude(system_frame, room_id=room_id, session_id=None)
+        reply = await self._run_anthropic(system_frame, room_id=room_id, session_id=None)
         session_id = reply.resume_id
         if not session_id:
-            raise DriverError("claude session id missing from startup output")
+            raise DriverError("anthropic session id missing from startup output")
         self.sessions[room_id] = session_id
         self._persist_session(room_id, session_id)
         if prime_reply:
@@ -178,7 +167,7 @@ class ClaudeCodeNewDriver(Driver):
         session_id = self.sessions.get(room_id)
         if not session_id:
             raise DriverError("session expired")
-        return await self._run_claude(user_message, room_id=room_id, session_id=session_id)
+        return await self._run_anthropic(user_message, room_id=room_id, session_id=session_id)
 
     async def close_session(self, room_id: str) -> None:
         self.sessions.pop(room_id, None)
@@ -192,7 +181,7 @@ class ClaudeCodeNewDriver(Driver):
         return room_id in self.sessions
 
     async def send(self, prompt: str) -> DriverReply:
-        return await self._run_claude(prompt, room_id="legacy", session_id=None)
+        return await self._run_anthropic(prompt, room_id="legacy", session_id=None)
 
     def _extract_session_id(self, text: str) -> str | None:
         for line in text.splitlines():

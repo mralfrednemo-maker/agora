@@ -41,6 +41,9 @@ class RoomStore:
     def events_file(self, room_id: str) -> Path:
         return self.room_dir(room_id) / "events.log"
 
+    def turn_ledger_file(self, room_id: str) -> Path:
+        return self.room_dir(room_id) / "turn-ledger.jsonl"
+
     def verdict_file(self, room_id: str) -> Path:
         return self.room_dir(room_id) / "verdict.md"
 
@@ -68,14 +71,21 @@ class RoomStore:
             handle.flush()
             os.fsync(handle.fileno())
 
+    def append_turn_ledger(self, room_id: str, line: dict[str, Any]) -> None:
+        target = self.turn_ledger_file(room_id)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(line, ensure_ascii=False))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
     def save_verdict(self, room_id: str, markdown: str) -> None:
         target = self.verdict_file(room_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.with_suffix(target.suffix + ".tmp")
         with temp.open("w", encoding="utf-8", newline="\n") as handle:
             handle.write(markdown)
-            if not markdown.endswith("\n"):
-                handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
         temp.replace(target)

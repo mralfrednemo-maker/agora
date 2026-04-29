@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from agora.drivers.base import Driver, DriverError, DriverReply
+from agora.drivers.base import Driver, DriverError, DriverReply, DriverTimeoutError
 
 
 SESSION_UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
@@ -35,7 +35,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 class GeminiCliDriver(Driver):
     id: str
     display_name: str
-    model: str = "gemini-2.5-pro"
+    model: str = "gemini-3-flash-preview"
     token_ceiling: int = 900_000
     sessions: dict[str, str] = field(default_factory=dict, init=False)
 
@@ -60,6 +60,11 @@ class GeminiCliDriver(Driver):
 
     def _session_file(self, room_id: str) -> Path:
         return self._sessions_dir / f"{room_id}.json"
+
+    def _room_cwd(self, room_id: str) -> Path:
+        path = self._state_root / f"room-{room_id}"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def _persist_session(self, room_id: str, session_id: str) -> None:
         _atomic_write_json(
@@ -87,7 +92,7 @@ class GeminiCliDriver(Driver):
             return False, f"gemini CLI spawn failed: {exc}"
         return True, "ok"
 
-    async def _run(self, prompt: str, resume_id: str | None = None) -> DriverReply:
+    async def _run(self, prompt: str, resume_id: str | None = None, room_id: str = "legacy") -> DriverReply:
         if self._cmd_path is None:
             ok, msg = await self.health_check()
             if not ok:
@@ -95,15 +100,30 @@ class GeminiCliDriver(Driver):
         cmd = [self._cmd_path or "gemini.cmd", "--yolo", "--model", self.model]
         if resume_id:
             cmd.extend(["--resume", resume_id])
-        cmd.extend(["--prompt", prompt])
+        cmd.extend(["--prompt", ""])
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd="C:/Users/chris/PROJECTS/agora",
+            cwd=str(self._room_cwd(room_id)),
         )
+        assert proc.stdin is not None
         try:
-            stdout, stderr = await proc.communicate()
+            proc.stdin.write(prompt.encode("utf-8"))
+            await proc.stdin.drain()
+            proc.stdin.close()
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                pass
+            raise DriverTimeoutError("Gemini CLI driver timed out after 300s")
         except asyncio.CancelledError:
             try:
                 proc.kill()
@@ -118,7 +138,9 @@ class GeminiCliDriver(Driver):
         err = (stderr or b"").decode("utf-8", errors="replace")
         raw = out + ("\n" + err if err else "")
         content = out.strip() or err.strip()
-        resume = self._extract_session_uuid(raw) or self._extract_session_uuid_from_logs()
+        if proc.returncode != 0 or content.startswith("Error resuming session:"):
+            raise DriverError(f"gemini CLI exit {proc.returncode}: {content[:500]}")
+        resume = self._extract_session_uuid_from_chat_store(self._room_cwd(room_id)) or self._extract_session_uuid(raw) or self._extract_session_uuid_from_logs()
         return DriverReply(content=content, raw_output=raw, resume_id=resume)
 
     def _extract_session_uuid(self, text: str) -> str | None:
@@ -146,8 +168,30 @@ class GeminiCliDriver(Driver):
                 return match.group(0)
         return None
 
+    def _extract_session_uuid_from_chat_store(self, cwd: Path) -> str | None:
+        workspace_name = Path(os.path.abspath(cwd)).name
+        candidates = [workspace_name, workspace_name.replace("_", "-")]
+        session_files: list[Path] = []
+        for candidate in dict.fromkeys(candidates):
+            chat_dir = Path.home() / ".gemini" / "tmp" / candidate / "chats"
+            if chat_dir.exists():
+                session_files.extend(chat_dir.glob("session-*.jsonl"))
+        if not session_files:
+            return None
+        session_files = sorted(session_files, key=lambda path: path.stat().st_mtime, reverse=True)
+        for path in session_files[:10]:
+            try:
+                first_line = path.read_text(encoding="utf-8", errors="replace").splitlines()[0]
+                payload = json.loads(first_line)
+            except Exception:
+                continue
+            session_id = payload.get("sessionId")
+            if isinstance(session_id, str) and session_id:
+                return session_id
+        return None
+
     async def start_session(self, room_id: str, system_frame: str, prime_reply: bool = True) -> str:
-        reply = await self._run(system_frame)
+        reply = await self._run(system_frame, room_id=room_id)
         session_id = reply.resume_id
         if not session_id:
             raise DriverError("session expired")
@@ -163,7 +207,7 @@ class GeminiCliDriver(Driver):
         session_id = self.sessions.get(room_id)
         if not session_id:
             raise DriverError("session expired")
-        return await self._run(user_message, resume_id=session_id)
+        return await self._run(user_message, resume_id=session_id, room_id=room_id)
 
     async def close_session(self, room_id: str) -> None:
         self.sessions.pop(room_id, None)

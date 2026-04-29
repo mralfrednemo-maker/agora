@@ -27,6 +27,7 @@ class DeltaInput:
     include_opponents: bool
     opponents: list[ParticipantPromptView]
     phase_instruction: str
+    self_last: str = ""  # DoD §8: "[YOUR LAST CONTRIBUTION — PREVIOUS ROUND]"
 
 
 @dataclass(slots=True)
@@ -60,6 +61,7 @@ Rules:
 - Do not ask the room for clarification - commit to your interpretation.
 - Keep arguments concrete and falsifiable.
 - Address opponents by their room id when replying to them.
+- Do not use external information or tools.
 
 [BRIEF]
 {{ payload.topic }}
@@ -74,8 +76,11 @@ Respond now.
 DELTA_TEMPLATE = """
 [PHASE - {{ payload.phase_name }}, round {{ payload.round_number }}]
 
+[YOUR LAST CONTRIBUTION — PREVIOUS ROUND]
+{{ payload.self_last or "(none yet)" }}
+
 {% if payload.include_opponents %}
-Opponents' latest contributions:
+[OPPONENTS' LAST CONTRIBUTIONS — PREVIOUS ROUND]
 {% for p in payload.opponents %}
 --- {{ p.display_name }} ---
 {{ p.last_content }}
